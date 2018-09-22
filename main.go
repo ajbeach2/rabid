@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/streadway/amqp"
 	"log"
-	"os"
+	// "os"
 	"sync"
 )
 
@@ -54,7 +54,7 @@ func (worker *Worker) Subscribe() {
 
 	sub := worker.Session
 
-	if _, err := sub.QueueDeclare(queue, true, false, true, false, nil); err != nil {
+	if _, err := sub.QueueDeclare(queue, true, false, false, false, nil); err != nil {
 		log.Printf("cannot consume from exclusive queue: %q, %v", queue, err)
 		return
 	}
@@ -65,7 +65,7 @@ func (worker *Worker) Subscribe() {
 		return
 	}
 
-	deliveries, err := sub.Consume(queue, "", false, true, false, false, nil)
+	deliveries, err := sub.Consume(queue, "", false, false, false, false, nil)
 	if err != nil {
 		log.Printf("cannot consume from: %q, %v", queue, err)
 		return
@@ -73,7 +73,7 @@ func (worker *Worker) Subscribe() {
 
 	log.Printf("subscribed...")
 	for msg := range deliveries {
-		fmt.Fprintln(os.Stdout, string(msg.Body))
+		// fmt.Fprintln(os.Stdout, string(msg.Body))
 		sub.Ack(msg.DeliveryTag, false)
 	}
 
@@ -167,7 +167,7 @@ func (grp *ConnectionGroup) Connect() {
 				x.Subscribe()
 			}(worker)
 		}
-
+		fmt.Println("Waiting for workers to complete...")
 		wg.Wait()
 	}
 }
