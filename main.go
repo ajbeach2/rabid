@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"github.com/streadway/amqp"
 	"log"
+	"os"
 	"sync"
 )
 
@@ -46,6 +48,60 @@ func (grp *ConnectionGroup) Close() error {
 	}
 	return grp.Connection.Close()
 }
+
+func (worker *Worker) Subscribe() {
+	queue := "test"
+
+	sub := worker.Session
+
+	if _, err := sub.QueueDeclare(queue, true, false, true, false, nil); err != nil {
+		log.Printf("cannot consume from exclusive queue: %q, %v", queue, err)
+		return
+	}
+
+	routingKey := "application specific routing key for fancy toplogies"
+	if err := sub.QueueBind(queue, routingKey, exchange, false, nil); err != nil {
+		log.Printf("cannot consume without a binding to exchange: %q, %v", exchange, err)
+		return
+	}
+
+	deliveries, err := sub.Consume(queue, "", false, true, false, false, nil)
+	if err != nil {
+		log.Printf("cannot consume from: %q, %v", queue, err)
+		return
+	}
+
+	log.Printf("subscribed...")
+	for msg := range deliveries {
+		fmt.Fprintln(os.Stdout, string(msg.Body))
+		sub.Ack(msg.DeliveryTag, false)
+	}
+
+}
+
+// func read(r io.Reader) <-chan message {
+// 	lines := make(chan message)
+// 	go func() {
+// 		defer close(lines)
+// 		scan := bufio.NewScanner(r)
+// 		for scan.Scan() {
+// 			lines <- message(scan.Bytes())
+// 		}
+// 	}()
+// 	return lines
+// }
+
+// write is this application's subscriber of application messages, printing to
+// stdout.
+// func write(w io.Writer) chan<- message {
+// 	lines := make(chan message)
+// 	go func() {
+// 		for line := range lines {
+// 			fmt.Fprintln(w, string(line))
+// 		}
+// 	}()
+// 	return lines
+// }
 
 func (worker *Worker) Publish() {
 	var (
@@ -125,6 +181,17 @@ func (grp *ConnectionGroup) Connect() {
 				x.Publish()
 			}(worker)
 		}
+
+		for i, worker := range grp.Workers {
+			wg.Add(1)
+			log.Println("Creaging Subscriber...", i+1)
+			worker.NewSession(grp.Connection)
+			go func(x Worker) {
+				defer wg.Done()
+				x.Subscribe()
+			}(worker)
+		}
+
 		wg.Wait()
 	}
 }
@@ -149,7 +216,7 @@ func main() {
 
 	go func() {
 		for i := 0; i < 1000000; i++ {
-			in <- []byte("Message 123 123 123 123")
+			in <- []byte(fmt.Sprint(i))
 		}
 	}()
 	connGrp.Connect()
