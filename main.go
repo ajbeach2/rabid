@@ -79,30 +79,6 @@ func (worker *Worker) Subscribe() {
 
 }
 
-// func read(r io.Reader) <-chan message {
-// 	lines := make(chan message)
-// 	go func() {
-// 		defer close(lines)
-// 		scan := bufio.NewScanner(r)
-// 		for scan.Scan() {
-// 			lines <- message(scan.Bytes())
-// 		}
-// 	}()
-// 	return lines
-// }
-
-// write is this application's subscriber of application messages, printing to
-// stdout.
-// func write(w io.Writer) chan<- message {
-// 	lines := make(chan message)
-// 	go func() {
-// 		for line := range lines {
-// 			fmt.Fprintln(w, string(line))
-// 		}
-// 	}()
-// 	return lines
-// }
-
 func (worker *Worker) Publish() {
 	var (
 		running bool
