@@ -2,14 +2,49 @@ package main
 
 import (
 	"fmt"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/streadway/amqp"
 	"log"
-	// "os"
+	"os"
+	"strconv"
 	"sync"
 )
 
-const exchange = "pubsub"
-const cpus = 1
+var exchange string
+var workers int
+var routingKey string
+var queue string
+
+func init() {
+	zerolog.TimeFieldFormat = ""
+	exchange = os.Getenv("OUTBOUND_EXCHANGE")
+	queue = os.Getenv("INBOUD_QUEUE")
+	workers = os.Getenv("RABID_WORKERS")
+	routingKey = os.Getenv("ROUTING_KEY")
+
+	if exchange == "" {
+		log.Fatal("Missing Environment Variable OUTBOUND_EXCHANGE")
+	}
+
+	if queue == "" {
+		log.Fatal("Missing Environment Variable INBOUD_QUEUE")
+	}
+
+	if workers == "" {
+		workers = 1
+	} else {
+		i, err := strconv.Atoi(workers)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func work(msg message) error {
+	log.Println(string(msg))
+	return nil
+}
 
 type Session struct {
 	*amqp.Connection
@@ -50,8 +85,6 @@ func (grp *ConnectionGroup) Close() error {
 }
 
 func (worker *Worker) Subscribe() {
-	queue := "test"
-
 	sub := worker.Session
 
 	if _, err := sub.QueueDeclare(queue, false, false, false, false, nil); err != nil {
@@ -59,7 +92,6 @@ func (worker *Worker) Subscribe() {
 		return
 	}
 
-	routingKey := "application specific routing key for fancy toplogies"
 	if err := sub.QueueBind(queue, routingKey, exchange, false, nil); err != nil {
 		log.Printf("cannot consume without a binding to exchange: %q, %v", exchange, err)
 		return
@@ -73,8 +105,12 @@ func (worker *Worker) Subscribe() {
 
 	log.Printf("subscribed...")
 	for msg := range deliveries {
-		// fmt.Fprintln(os.Stdout, string(msg.Body))
-		sub.Ack(msg.DeliveryTag, false)
+		if err := work(msg); err != nil {
+			log.Println(err)
+		} else {
+			worker.out <- msg
+			sub.Ack(msg.DeliveryTag, false)
+		}
 	}
 
 }
@@ -83,64 +119,20 @@ func (worker *Worker) Publish() {
 	var (
 		running bool
 		reading = worker.In
-		// pending = make(chan message, 1)
-		// confirm = make(chan amqp.Confirmation, 1)
 	)
-
-	// if err := worker.Session.Confirm(false); err != nil {
-	// 	log.Printf("publisher confirms not supported")
-	// 	close(confirm) // confirms not supported, simulate by always nacking
-	// } else {
-	// 	worker.Session.NotifyPublish(confirm)
-	// }
-	// Publish:
 	for {
-		// print("starting publish...")
 		var body message
 		select {
-		// case confirmed, ok := <-confirm:
-		// 	if !ok {
-		// 		break Publish
-		// 	}
-		// 	if !confirmed.Ack {
-		// 		log.Printf("nack message %d, body: %q", confirmed.DeliveryTag, string(body))
-		// 	}
-		// 	fmt.Println("here")
-		// 	reading = worker.In
-
-		// case body = <-pending:
-		// 	routingKey := "ignored for fanout exchanges, application dependent for other exchanges"
-		// 	fmt.Println("1")
-		// 	err := worker.Session.Publish(exchange, routingKey, false, false, amqp.Publishing{
-		// 		Body: body,
-		// 	})
-		// 	// Retry failed delivery on the next session
-
-		// 	if err != nil {
-		// 		log.Println("sdfasdfasdfasdf")
-		// 		pending <- body
-		// 		worker.Session.Channel.Close()
-		// 		break Publish
-		// 	}
-		// 	fmt.Println("2")
-
 		case body, running = <-reading:
-			// all messages consumed
 			if !running {
 				return
 			}
-			// work on pending delivery until ack'd
-			routingKey := "ignored for fanout exchanges, application dependent for other exchanges"
-			// fmt.Println("3")
 			err := worker.Session.Publish(exchange, routingKey, false, false, amqp.Publishing{
 				Body: body,
 			})
 			if err != nil {
 				log.Println(err)
 			}
-			// reading = nil
-			// default:
-			// 	reading = worker.In
 		}
 	}
 }
@@ -160,7 +152,6 @@ func (grp *ConnectionGroup) Connect() {
 		}
 
 		log.Println("Establishing new connection...")
-
 		var wg sync.WaitGroup
 		for i, worker := range grp.Workers {
 			wg.Add(1)
@@ -171,23 +162,14 @@ func (grp *ConnectionGroup) Connect() {
 				x.Publish()
 			}(worker)
 		}
-
-		// for i, worker := range grp.Workers {
-		// 	wg.Add(1)
-		// 	log.Println("Creaging Subscriber...", i+1)
-		// 	worker.NewSession(grp.Connection)
-		// 	go func(x Worker) {
-		// 		defer wg.Done()
-		// 		x.Subscribe()
-		// 	}(worker)
-		// }
 		fmt.Println("Waiting for workers to complete...")
 		wg.Wait()
 	}
 }
 
-func NewConnection(url string, in chan message) *ConnectionGroup {
-	workers := make([]Worker, cpus, cpus)
+func NewConnection(url string) *ConnectionGroup {
+	workers := make([]Worker, workers, workers)
+	in := make(chan message)
 
 	for i := 0; i < cpus; i++ {
 		workers[i] = Worker{}
@@ -200,15 +182,6 @@ func NewConnection(url string, in chan message) *ConnectionGroup {
 }
 
 func main() {
-	in := make(chan message)
 	connGrp := NewConnection("amqp://localhost:5672", in)
-
-	go func() {
-		for {
-			// fmt.Println("a")
-			in <- []byte("Hello world")
-		}
-	}()
-
 	connGrp.Connect()
 }
