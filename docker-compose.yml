@@ -12,3 +12,8 @@ rabbitmq:
     - RABBITMQ_VHOST=/
     - RABBITMQ_MANAGEMENT_USER=guest
     - RABBITMQ_MANAGEMENT_PASSWORD=guest
+
+redis:
+  image: redis
+  ports: 
+    - "6379:6379"
