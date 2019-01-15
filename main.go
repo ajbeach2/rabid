@@ -55,7 +55,6 @@ type message []byte
 
 type Worker struct {
 	Session Session
-	In      chan message
 	Out     chan message
 }
 
@@ -167,13 +166,22 @@ func (grp *ConnectionGroup) Connect() {
 	}
 }
 
-func NewConnection(url string) *ConnectionGroup {
+type AppConfig struct {
+	URL              string
+	Process          func([]byte) ([]byte, error)
+	Workers          int
+	OutBoundExchange string
+	InBoundQueue     string
+	RoutingKey       string
+}
+
+func NewConnection(config *AppConfig) *ConnectionGroup {
 	workers := make([]Worker, workers, workers)
-	in := make(chan message)
+	out := make(chan message)
 
 	for i := 0; i < cpus; i++ {
 		workers[i] = Worker{}
-		workers[i].In = in
+		workers[i].out = Out
 	}
 	connGrp := &ConnectionGroup{}
 	connGrp.Url = url
