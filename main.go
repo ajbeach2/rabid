@@ -41,11 +41,6 @@ func init() {
 	}
 }
 
-func work(msg message) error {
-	log.Println(string(msg))
-	return nil
-}
-
 type Session struct {
 	*amqp.Connection
 	*amqp.Channel
@@ -58,7 +53,7 @@ type Worker struct {
 	Out     chan message
 }
 
-type ConnectionGroup struct {
+type App struct {
 	Workers    []Worker
 	Url        string
 	Connection *amqp.Connection
@@ -76,7 +71,7 @@ func (worker *Worker) NewSession(conn *amqp.Connection) error {
 	return err
 }
 
-func (grp *ConnectionGroup) Close() error {
+func (grp *App) Close() error {
 	if grp.Connection == nil {
 		return nil
 	}
@@ -104,7 +99,7 @@ func (worker *Worker) Subscribe() {
 
 	log.Printf("subscribed...")
 	for msg := range deliveries {
-		if err := work(msg); err != nil {
+		if err := worker.Process(msg); err != nil {
 			log.Println(err)
 		} else {
 			worker.out <- msg
@@ -136,31 +131,43 @@ func (worker *Worker) Publish() {
 	}
 }
 
-func (grp *ConnectionGroup) Connect() {
+func (grp *App) Run() {
 	for {
 		err := grp.Close()
 		if err != nil {
 			log.Fatalf("Error closing connection: %v: %q", err, grp.Url)
 		}
 
+		log.Println("Establishing new connection...")
 		conn, err := amqp.Dial(grp.Url)
 		if err != nil {
 			log.Fatalf("cannot (re)dial: %v: %q", err, grp.Url)
 		} else {
+			log.Println("New connection established")
 			grp.Connection = conn
 		}
 
-		log.Println("Establishing new connection...")
 		var wg sync.WaitGroup
 		for i, worker := range grp.Workers {
 			wg.Add(1)
-			log.Println("Creaging publisher", i+1)
+			log.Println("Creating publisher...", i+1)
 			worker.NewSession(grp.Connection)
 			go func(x Worker) {
 				defer wg.Done()
 				x.Publish()
 			}(worker)
 		}
+
+		for i, worker := range grp.Workers {
+			wg.Add(1)
+			log.Println("Creating Subscriber...", i+1)
+			worker.NewSession(grp.Connection)
+			go func(x Worker) {
+				defer wg.Done()
+				x.Subscribe()
+			}(worker)
+		}
+
 		fmt.Println("Waiting for workers to complete...")
 		wg.Wait()
 	}
@@ -175,21 +182,22 @@ type AppConfig struct {
 	RoutingKey       string
 }
 
-func NewConnection(config *AppConfig) *ConnectionGroup {
-	workers := make([]Worker, workers, workers)
+func NewApp(config *AppConfig) *App {
+	workers := make([]Worker, workers, config.Workers)
 	out := make(chan message)
 
-	for i := 0; i < cpus; i++ {
+	for i := 0; i < config.Workers; i++ {
 		workers[i] = Worker{}
 		workers[i].out = Out
+		workers[i].Process = config.Process
 	}
-	connGrp := &ConnectionGroup{}
+	connGrp := &App{}
 	connGrp.Url = url
 	connGrp.Workers = workers
 	return connGrp
 }
 
 func main() {
-	connGrp := NewConnection("amqp://localhost:5672", in)
-	connGrp.Connect()
+	connGrp := NewApp("amqp://localhost:5672", in)
+	connGrp.Run()
 }
